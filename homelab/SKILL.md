@@ -25,7 +25,7 @@ Preferred kubeconfig location pattern:
 
 If either path is missing, search under `~/Sites` or ask for the path. Never invent cluster paths.
 
-Use repo/live state over memory:
+Use repo/live state over memory. For drift-prone facts, verify before answering or changing anything:
 
 ```bash
 cd <homelab-gitops>
@@ -38,6 +38,7 @@ KUBECONFIG=<homelab-gitops>/kubeconfig kubectl -n argocd get applications
 - The cluster runs Talos on Proxmox.
 - GitOps is managed by Argo CD from a private/public Git repository, usually branch `master`.
 - Persistent changes should be made in Git first, then pushed, then verified through Argo and live Kubernetes state.
+- For most tasks, follow this order: inspect Git/live state, edit Git, render or lint when possible, commit, push, refresh Argo, then verify the real workload.
 - Do not make lasting manual UI changes in Argo/Grafana/Kubernetes when the same state belongs in Git.
 - Prefer pinned chart/image/plugin versions. Do not use `latest`, floating chart revisions, or branch names for external dependencies.
 - Use conventional commit messages. The preferred Git history is linear/rebase-style.
@@ -110,7 +111,6 @@ Secret workflow:
 4. Verify the synced Kubernetes Secret exists and has the expected key count, without revealing values.
 5. Verify the consuming pod gets the env/volume and works.
 
-
 ## Cilium And Network Policies
 
 Cilium is the cluster CNI and policy engine. Treat it as the default networking/security layer for pod traffic, not as an ingress replacement by itself.
@@ -180,7 +180,7 @@ Stable public hostnames should describe the purpose, not the implementation. Pub
 <root-domain>                          dashboard/home portal
 status.<root-domain>                   status monitoring
 analytics.<root-domain>                analytics
-git.<root-domain>                     Git hosting
+git.<root-domain>                      Git hosting
 argo.<root-domain>                     Argo CD
 automations.<root-domain>              automation runner
 grafana.<root-domain>                  Grafana
