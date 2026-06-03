@@ -1,6 +1,6 @@
 ---
 name: homelab
-description: Use this when working on the user's Talos/Proxmox homelab, Kubernetes GitOps repo, Argo CD apps, 1Password/External Secrets, Cloudflare Tunnel ingress, Grafana/Plausible/monitoring, or services deployed through the homelab GitOps repository. Trigger for requests mentioning homelab, Talos, Proxmox, Argo, GitOps, Kubernetes services, Cloudflare Tunnel, 1Password Connect, Grafana MCP, Plausible analytics, or homelab domains.
+description: Use this when working on the user's Talos/Proxmox homelab, Kubernetes GitOps repo, Argo CD apps, 1Password/External Secrets, Cloudflare Tunnel ingress, observability/analytics, or services deployed through the homelab GitOps repository. Trigger for requests mentioning homelab, Talos, Proxmox, Argo, GitOps, Kubernetes services, Cloudflare Tunnel, 1Password Connect, Grafana MCP, analytics dashboards, or homelab domains.
 ---
 
 # Homelab
@@ -177,19 +177,18 @@ Rules:
 - Dashboards should be useful for AI inspection: clear labels, useful units, current filters, and no mixed-service ambiguity.
 - For analytics, split by project/hostname. Avoid dashboards that mix unrelated apps by default.
 
-Plausible analytics pattern:
+Analytics datasource pattern:
 
-- Plausible stores analytics in ClickHouse.
-- Grafana should use a read-only ClickHouse user/datasource.
-- Keep a dashboard-level `Host` or `Project` selector so metrics do not mix unrelated apps.
-- If the Grafana ClickHouse datasource fails with readonly errors, check whether the reader profile allows harmless query settings such as `max_execution_time` and `limit` while still restricting writes.
-- If geo/country fields use ClickHouse dictionaries, the reader may need dictionary-read permission in addition to table `SELECT`.
+- Use read-only datasource credentials for analytics and observability.
+- Keep a dashboard-level `Host`, `Project`, or equivalent tenant selector so metrics do not mix unrelated apps.
+- If a provisioned datasource fails despite valid credentials, inspect datasource/plugin logs before widening permissions. Some plugins require narrowly scoped read-only compatibility settings.
+- If derived fields depend on auxiliary database objects such as dictionaries, views, schemas, or functions, the reader may need explicit read access to those objects.
 
 When building analytics dashboards for AI:
 
-- Include traffic over time, top pages, sources/referrers, custom events, countries, devices/browsers, UTM campaigns, and recent activity.
+- Include traffic over time, top pages, sources/referrers, custom events, countries, devices/browsers, campaigns, and recent activity when the data source supports them.
 - Make filters explicit and visible.
-- Validate SQL directly against ClickHouse/Postgres and then validate through Grafana when possible.
+- Validate queries directly against the backing database and then validate through the dashboard tool when possible.
 - Do not rely only on `Synced/Healthy`; check that panels return data.
 
 ## Empirical Lessons
@@ -202,13 +201,13 @@ These are recurring lessons from this homelab. Keep them generic in public docs,
 - A release bump is not complete at commit time. Verify source release, image/tag existence, chart render, Argo sync, deployed image, pod readiness, logs, and a real app response.
 - For apps with `local-path` storage, deletion is a two-part operation: remove GitOps/Argo resources and separately inspect retained PVs/data before deleting disk state.
 - Teardown means more than disabling an app. Check GitOps manifests, Argo apps, network policies, public DNS/tunnel routing, secrets, and retained volumes.
-- Headlamp-style Kubernetes UI tokens should be generated on demand with short practical durations; do not store long-lived cluster tokens in Git.
+- Kubernetes UI or admin access tokens should be generated on demand with short practical durations; do not store long-lived cluster tokens in Git.
 - Renovate only updates what it can see. When adding local charts, ensure image tags and chart versions live in files matched by Renovate.
-- Grafana restart panels based on Prometheus `increase(...)` can be fractional. For incident truth, check restart counters, last termination reason, OOMKilled status, timestamps, and memory working set.
-- Grafana provisioning can look correct while panels still fail. Check plugin installation, datasource provisioning, mounted dashboard files, and Grafana query logs.
-- Grafana ClickHouse datasources may require readonly users to change harmless query settings such as `limit` and `max_execution_time`; keep write access blocked.
+- Derived restart or incident metrics can be rounded, delayed, or fractional depending on the query. For incident truth, check raw counters, last termination reason, timestamps, logs, and resource usage.
+- Dashboard provisioning can look correct while panels still fail. Check plugin installation, datasource provisioning, mounted dashboard files, and query logs.
+- Provisioned datasources can require narrowly scoped read-only compatibility settings; check datasource/plugin logs before widening permissions, and keep write access blocked.
 - Analytics dashboards must have an explicit project/host selector. Mixed-project analytics produces misleading output for both humans and AI.
-- If a dashboard is backed by a ConfigMap, verify both the Kubernetes ConfigMap and the file mounted inside the Grafana pod.
+- If a dashboard is backed by a ConfigMap or mounted file, verify both the Kubernetes object and the file mounted inside the consuming pod.
 - If Cloudflare/DNS changes were part of the task, verify public route behavior and clean stale records.
 - If External Secrets are involved, verify `SecretSynced=True`, expected keys exist, and consuming pods actually receive the updated values.
 
@@ -218,8 +217,8 @@ These are recurring lessons from this homelab. Keep them generic in public docs,
 - Workload apps may also need a direct refresh.
 - Argo `Synced/Healthy` is necessary but not sufficient. Verify runtime behavior.
 - Avoid manual Argo UI changes; if manual apply is needed to unblock bootstrap, make Git match and document why.
-- If Grafana dashboards are provisioned from ConfigMaps, check both the ConfigMap and the mounted file inside the pod.
-- If a chart deploys a plugin/datasource/dashboard, verify the plugin is installed, the datasource is provisioned, and logs show no query errors.
+- If dashboards are provisioned from ConfigMaps or mounted files, check both the Kubernetes object and the mounted file inside the pod.
+- If a chart deploys a plugin, datasource, or dashboard, verify the plugin is installed, the datasource is provisioned, and logs show no query errors.
 
 ## Proxmox/Talos Notes
 
