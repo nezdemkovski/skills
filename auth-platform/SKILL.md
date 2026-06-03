@@ -1,6 +1,7 @@
 ---
 name: auth-platform
-description: Use this when working on the user's shared auth platform: auth service architecture, realm/project setup, Better Auth behavior, login/admin UI, OAuth/OIDC or MCP auth, passkeys/2FA, email delivery, billing, storage uploads, generated clients, local auth development, or auth release/deployment flow. Trigger for requests mentioning auth service, auth-platform, Better Auth, realms, hosted login, admin UI, OAuth provider, MCP OAuth, passkeys, 2FA, billing, Polar, auth chart, or auth release.
+description: >
+  Use this when working on the user's shared auth platform: auth service architecture, realm/project setup, Better Auth behavior, login/admin UI, OAuth/OIDC or MCP auth, passkeys/2FA, email delivery, billing, storage uploads, generated clients, local auth development, or auth release/deployment flow. Trigger for requests mentioning auth service, auth-platform, Better Auth, realms, hosted login, admin UI, OAuth provider, MCP OAuth, passkeys, 2FA, billing, Polar, auth chart, or auth release.
 ---
 
 # Auth Platform
@@ -125,20 +126,3 @@ Release flow is source repo first, GitOps second:
 6. Refresh Argo and verify live pods, logs, routes, and real auth flows.
 
 Do not assume a chart bump changed runtime behavior. Verify deployed image tags and real responses.
-
-## Public Safety Rules
-
-This skill may live in a public repo. Keep it generic:
-
-- Do not add actual domains, subdomains, registry paths, image names, emails, IPs, token names, client IDs, secret record names, database names, or service DNS names.
-- Do not add credentials, API keys, webhook secrets, generated passwords, OAuth secrets, session cookies, private keys, kubeconfigs, or tunnel credentials.
-- Prefer placeholders like `<auth-repo>`, `<homelab-gitops>`, `<realm>`, `<app-domain>`, `<namespace>`, `<chart-version>`, and `<image-tag>`.
-- If exact values are needed, discover them from private local files, 1Password, GitOps, or live state during the task.
-
-## Communication Style
-
-- Be direct and security-conscious.
-- State whether a change affects realm behavior, platform behavior, deployment behavior, or downstream app integration.
-- If something is broken, inspect exact logs, route, realm, and request flow before changing code.
-- Do not expose hidden hostnames, secret record names, tokens, or secret values in final answers.
-- If a shortcut creates a second source of truth, call that out and choose the cleaner platform model.

@@ -1,6 +1,7 @@
 ---
 name: homelab
-description: Use this when working on the user's Talos/Proxmox homelab, Kubernetes GitOps repo, Argo CD apps, Cilium/network policies, 1Password/External Secrets, Cloudflare Tunnel ingress, observability/analytics, or services deployed through the homelab GitOps repository. Trigger for requests mentioning homelab, Talos, Proxmox, Argo, GitOps, Kubernetes services, Cilium, NetworkPolicy, Cloudflare Tunnel, 1Password Connect, Grafana MCP, analytics dashboards, or homelab domains.
+description: >
+  Use this when working on the user's Talos/Proxmox homelab, Kubernetes GitOps repo, Argo CD apps, Cilium/network policies, 1Password/External Secrets, Cloudflare Tunnel ingress, observability/analytics, or services deployed through the homelab GitOps repository. Trigger for requests mentioning homelab, Talos, Proxmox, Argo, GitOps, Kubernetes services, Cilium, NetworkPolicy, Cloudflare Tunnel, 1Password Connect, Grafana MCP, analytics dashboards, or homelab domains.
 ---
 
 # Homelab
@@ -288,21 +289,3 @@ These are recurring lessons from this homelab. Keep them generic in public docs,
 - Talos has no traditional mutable Linux install flow; machine config and Kubernetes are the main operating surface.
 - Proxmox access may exist through MCP or SSH, but verify live availability before assuming.
 - Be careful resizing memory/disks or stopping legacy VMs; check current services first.
-
-## Public Safety Rules
-
-This skill may live in a public repo. Keep it generic:
-
-- Do not add actual root domains, private subdomains, IPs, tunnel IDs, token names, or exact secret item names.
-- Do not add kubeconfig contents, usernames/passwords, API keys, or one-off generated credentials.
-- Do not add private database names, internal service DNS names, or table names unless they are already public product defaults.
-- Prefer placeholders like `<root-domain>`, `<homelab-gitops>`, `<namespace>`, `<service>`, `<app-domain>`.
-- If exact values are needed, discover them from local private files or live state during the task, not from this public skill.
-
-## Communication Style For This Homelab
-
-- Be direct and practical.
-- Explain the real effect of infra changes before generic background.
-- If something is broken, check logs/live state first.
-- Do not expose hidden hostnames, tunnel configs, tokens, or secret values in final answers.
-- If a design choice affects future maintenance, say the tradeoff plainly.
