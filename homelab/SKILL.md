@@ -1,0 +1,246 @@
+---
+name: homelab
+description: Use this when working on the user's Talos/Proxmox homelab, Kubernetes GitOps repo, Argo CD apps, 1Password/External Secrets, Cloudflare Tunnel ingress, Grafana/Plausible/monitoring, or services deployed through the homelab GitOps repository. Trigger for requests mentioning homelab, Talos, Proxmox, Argo, GitOps, Kubernetes services, Cloudflare Tunnel, 1Password Connect, Grafana MCP, Plausible analytics, or homelab domains.
+---
+
+# Homelab
+
+This skill is the operating guide for the user's homelab. It is intentionally public-safe: do not rely on hardcoded private domains, secret item names, or local absolute paths. Discover the current values from the local machine, private GitOps repo, 1Password, or live cluster state.
+
+## First Steps
+
+Before making changes, locate the GitOps repo and kubeconfig.
+
+Preferred repo location pattern:
+
+```text
+~/Sites/homelab-gitops
+```
+
+Preferred kubeconfig location pattern:
+
+```text
+<homelab-gitops>/kubeconfig
+```
+
+If either path is missing, search under `~/Sites` or ask for the path. Never invent cluster paths.
+
+Use repo/live state over memory:
+
+```bash
+cd <homelab-gitops>
+KUBECONFIG=<homelab-gitops>/kubeconfig kubectl get nodes
+KUBECONFIG=<homelab-gitops>/kubeconfig kubectl -n argocd get applications
+```
+
+## Core Model
+
+- The cluster runs Talos on Proxmox.
+- GitOps is managed by Argo CD from a private/public Git repository, usually branch `master`.
+- Persistent changes should be made in Git first, then pushed, then verified through Argo and live Kubernetes state.
+- Do not make lasting manual UI changes in Argo/Grafana/Kubernetes when the same state belongs in Git.
+- Prefer pinned chart/image/plugin versions. Do not use `latest`, floating chart revisions, or branch names for external dependencies.
+- Use conventional commit messages. The preferred Git history is linear/rebase-style.
+
+## Repository Map
+
+In the GitOps repo, expect this structure:
+
+```text
+bootstrap/project.yaml                 Argo AppProject
+apps/infra/**                          cluster infrastructure apps and policies
+apps/workloads/**                      workload Argo Applications and raw manifests
+charts/**                              local Helm charts
+AGENTS.md                              repo operating rules for agents
+README.md                              human overview only, not agent instructions
+renovate.json                          dependency update rules
+```
+
+Related application repos usually live next to the GitOps repo under `~/Sites`. Locate them with `rg --files`, `find`, or Git remotes instead of assuming exact private paths.
+
+## Common Commands
+
+Run from `<homelab-gitops>`:
+
+```bash
+KUBECONFIG=<homelab-gitops>/kubeconfig kubectl get nodes
+KUBECONFIG=<homelab-gitops>/kubeconfig kubectl -n argocd get applications
+helm lint charts/<chart>
+helm template <release> charts/<chart> --namespace <namespace> >/tmp/<chart>-render.yaml
+git diff --check
+```
+
+After pushing GitOps changes, force Argo refresh when useful:
+
+```bash
+KUBECONFIG=<homelab-gitops>/kubeconfig \
+  kubectl -n argocd annotate application homelab-root argocd.argoproj.io/refresh=hard --overwrite
+```
+
+Then verify app state:
+
+```bash
+KUBECONFIG=<homelab-gitops>/kubeconfig \
+  kubectl -n argocd get applications homelab-root <app> \
+  -o custom-columns=NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status,REV:.status.sync.revision
+```
+
+For runtime verification, inspect pods/logs/services directly:
+
+```bash
+KUBECONFIG=<homelab-gitops>/kubeconfig kubectl -n <namespace> get pods,svc,ingress
+KUBECONFIG=<homelab-gitops>/kubeconfig kubectl -n <namespace> logs deploy/<deployment> --tail=200
+```
+
+## Secrets
+
+- Runtime secrets live in 1Password and are synced by External Secrets / 1Password Connect.
+- Do not commit secrets, raw tunnel credentials, kubeconfigs, tokens, passwords, or sensitive service contracts.
+- If a secret must be added, create/update the relevant 1Password item and wire it through an `ExternalSecret`.
+- Prefer separate read-only credentials for observability integrations.
+- Do not print secret values in final answers.
+- Avoid hardcoding 1Password item names in public docs. Discover them from `ExternalSecret` manifests or ask the user.
+
+Secret workflow:
+
+1. Find existing pattern in `apps/**/external-secret*.yaml` or chart templates.
+2. Add the field to the 1Password item.
+3. Add/update the `ExternalSecret` mapping.
+4. Verify the synced Kubernetes Secret exists and has the expected key count, without revealing values.
+5. Verify the consuming pod gets the env/volume and works.
+
+## Networking And Domains
+
+Stable public hostnames should describe the purpose, not the implementation. Public-safe examples:
+
+```text
+<root-domain>                          dashboard/home portal
+status.<root-domain>                   status monitoring
+analytics.<root-domain>                analytics
+git.<root-domain>                     Git hosting
+argo.<root-domain>                     Argo CD
+automations.<root-domain>              automation runner
+grafana.<root-domain>                  Grafana
+auth.<root-domain>                     shared auth service
+<app-domain>                           production app
+```
+
+Do not expose the user's actual domain list unless it is already in the user's prompt or required for the task.
+
+Cloudflare Tunnel is the main public ingress path. Prefer Git-managed Kubernetes ingress/router config where it exists, but keep sensitive tunnel credentials and private operational details out of Git.
+
+For DNS/Cloudflare operations, use the official Cloudflare CLI/API when available. Clean up stale DNS records when replacing hostnames. Verify DNS and route behavior with real requests.
+
+## Storage And Backups
+
+- Current storage may use `local-path` PVCs on a Talos VM node.
+- Treat `local-path` as node-bound storage: pod migration and snapshots are not automatic.
+- `reclaimPolicy` should be `Retain` for stateful data.
+- Be careful with Argo prune, PVC name changes, namespace moves, and chart renames.
+- For namespace/storage migrations, dump/restore stateful DBs first and verify before deleting old PVs.
+- A VM-level backup helps, but it is not a replacement for app/database-aware recovery plans.
+
+## Charts And Apps
+
+- Prefer official upstream Helm charts for mature apps.
+- For simple single-container apps, local charts are OK.
+- If raw manifests become non-trivial, move them into a chart.
+- Keep disable/enable behavior explicit in values or Argo app config.
+- Renovate should see image/chart versions in `apps/**` and `charts/**`.
+- New services should include resource requests/limits and NetworkPolicy updates.
+
+Typical app workflow:
+
+1. Add or update app/chart/manifests in Git.
+2. Add `ExternalSecret` wiring for secrets.
+3. Add NetworkPolicies for required ingress/egress.
+4. Run `helm lint`, `helm template`, `kubectl apply --dry-run=server` where possible.
+5. Commit and push to the GitOps branch.
+6. Refresh Argo and verify `Synced/Healthy`.
+7. Verify live pods, logs, routes, and real HTTP/API/database behavior.
+
+## Monitoring And Analytics
+
+Monitoring chart pattern:
+
+```text
+charts/monitoring
+```
+
+It may deploy Grafana, Grafana MCP, kube-prometheus-stack, dashboards, and datasources.
+
+Rules:
+
+- Prometheus should usually remain internal-only. Do not expose it publicly unless explicitly asked.
+- Grafana may be public behind the configured ingress/tunnel.
+- Grafana MCP is intended for AI-assisted dashboard/query work.
+- Dashboards should be useful for AI inspection: clear labels, useful units, current filters, and no mixed-service ambiguity.
+- For analytics, split by project/hostname. Avoid dashboards that mix unrelated apps by default.
+
+Plausible analytics pattern:
+
+- Plausible stores analytics in ClickHouse.
+- Grafana should use a read-only ClickHouse user/datasource.
+- Keep a dashboard-level `Host` or `Project` selector so metrics do not mix unrelated apps.
+- If the Grafana ClickHouse datasource fails with readonly errors, check whether the reader profile allows harmless query settings such as `max_execution_time` and `limit` while still restricting writes.
+- If geo/country fields use ClickHouse dictionaries, the reader may need dictionary-read permission in addition to table `SELECT`.
+
+When building analytics dashboards for AI:
+
+- Include traffic over time, top pages, sources/referrers, custom events, countries, devices/browsers, UTM campaigns, and recent activity.
+- Make filters explicit and visible.
+- Validate SQL directly against ClickHouse/Postgres and then validate through Grafana when possible.
+- Do not rely only on `Synced/Healthy`; check that panels return data.
+
+## Empirical Lessons
+
+These are recurring lessons from this homelab. Keep them generic in public docs, but apply them concretely from local repo/live state.
+
+- If pods stay Pending on a single-node Talos control plane, check whether scheduling on control-plane nodes is intentionally enabled before debugging the app.
+- If `kubectl` output does not match the expected cluster, assume the shell may be using the wrong context. Export the repo-local kubeconfig explicitly before continuing.
+- If Argo shows an old image or old app state right after refresh, wait for reconciliation and verify the Deployment spec, rollout status, and live HTTP/API behavior.
+- A release bump is not complete at commit time. Verify source release, image/tag existence, chart render, Argo sync, deployed image, pod readiness, logs, and a real app response.
+- For apps with `local-path` storage, deletion is a two-part operation: remove GitOps/Argo resources and separately inspect retained PVs/data before deleting disk state.
+- Teardown means more than disabling an app. Check GitOps manifests, Argo apps, network policies, public DNS/tunnel routing, secrets, and retained volumes.
+- Headlamp-style Kubernetes UI tokens should be generated on demand with short practical durations; do not store long-lived cluster tokens in Git.
+- Renovate only updates what it can see. When adding local charts, ensure image tags and chart versions live in files matched by Renovate.
+- Grafana restart panels based on Prometheus `increase(...)` can be fractional. For incident truth, check restart counters, last termination reason, OOMKilled status, timestamps, and memory working set.
+- Grafana provisioning can look correct while panels still fail. Check plugin installation, datasource provisioning, mounted dashboard files, and Grafana query logs.
+- Grafana ClickHouse datasources may require readonly users to change harmless query settings such as `limit` and `max_execution_time`; keep write access blocked.
+- Analytics dashboards must have an explicit project/host selector. Mixed-project analytics produces misleading output for both humans and AI.
+- If a dashboard is backed by a ConfigMap, verify both the Kubernetes ConfigMap and the file mounted inside the Grafana pod.
+- If Cloudflare/DNS changes were part of the task, verify public route behavior and clean stale records.
+- If External Secrets are involved, verify `SecretSynced=True`, expected keys exist, and consuming pods actually receive the updated values.
+
+## Argo/GitOps Gotchas
+
+- `homelab-root` is the root app; refresh it after changing app lists or shared infra.
+- Workload apps may also need a direct refresh.
+- Argo `Synced/Healthy` is necessary but not sufficient. Verify runtime behavior.
+- Avoid manual Argo UI changes; if manual apply is needed to unblock bootstrap, make Git match and document why.
+- If Grafana dashboards are provisioned from ConfigMaps, check both the ConfigMap and the mounted file inside the pod.
+- If a chart deploys a plugin/datasource/dashboard, verify the plugin is installed, the datasource is provisioned, and logs show no query errors.
+
+## Proxmox/Talos Notes
+
+- Talos has no traditional mutable Linux install flow; machine config and Kubernetes are the main operating surface.
+- Proxmox access may exist through MCP or SSH, but verify live availability before assuming.
+- Be careful resizing memory/disks or stopping legacy VMs; check current services first.
+
+## Public Safety Rules
+
+This skill may live in a public repo. Keep it generic:
+
+- Do not add actual root domains, private subdomains, IPs, tunnel IDs, token names, or exact secret item names.
+- Do not add kubeconfig contents, usernames/passwords, API keys, or one-off generated credentials.
+- Do not add private database names, internal service DNS names, or table names unless they are already public product defaults.
+- Prefer placeholders like `<root-domain>`, `<homelab-gitops>`, `<namespace>`, `<service>`, `<app-domain>`.
+- If exact values are needed, discover them from local private files or live state during the task, not from this public skill.
+
+## Communication Style For This Homelab
+
+- Be direct and practical.
+- Explain the real effect of infra changes before generic background.
+- If something is broken, check logs/live state first.
+- Do not expose hidden hostnames, tunnel configs, tokens, or secret values in final answers.
+- If a design choice affects future maintenance, say the tradeoff plainly.
