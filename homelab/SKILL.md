@@ -95,10 +95,11 @@ KUBECONFIG=<homelab-gitops>/kubeconfig kubectl -n <namespace> logs deploy/<deplo
 ## Secrets
 
 - Runtime secrets live in 1Password and are synced by External Secrets / 1Password Connect.
+- Use the official 1Password CLI, `op`, for secret reads and writes. Do not manually copy/paste secret values into chat, docs, shell history, or Git.
+- Never reveal passwords, tokens, private keys, tunnel credentials, or generated secret values in final answers. Confirm presence, key names, sync status, or item fields without printing values.
 - Do not commit secrets, raw tunnel credentials, kubeconfigs, tokens, passwords, or sensitive service contracts.
-- If a secret must be added, create/update the relevant 1Password item and wire it through an `ExternalSecret`.
+- If a secret must be added, create/update the relevant 1Password item with `op` and wire it through an `ExternalSecret`.
 - Prefer separate read-only credentials for observability integrations.
-- Do not print secret values in final answers.
 - Avoid hardcoding 1Password item names in public docs. Discover them from `ExternalSecret` manifests or ask the user.
 
 Secret workflow:
@@ -191,7 +192,7 @@ Do not expose the user's actual domain list unless it is already in the user's p
 
 Cloudflare Tunnel is the main public ingress path. Prefer Git-managed Kubernetes ingress/router config where it exists, but keep sensitive tunnel credentials and private operational details out of Git.
 
-For DNS/Cloudflare operations, use the official Cloudflare CLI/API when available. Clean up stale DNS records when replacing hostnames. Verify DNS and route behavior with real requests.
+For DNS/Cloudflare operations, use the modern official Cloudflare CLI `cf` when available. Do not use the old `cloudflare` CLI unless the user explicitly asks for it or the current machine only has that legacy tool installed. Clean up stale DNS records when replacing hostnames. Verify DNS and route behavior with real requests.
 
 ## Storage And Backups
 
