@@ -1,6 +1,6 @@
 ---
 name: homelab
-description: Use this when working on the user's Talos/Proxmox homelab, Kubernetes GitOps repo, Argo CD apps, 1Password/External Secrets, Cloudflare Tunnel ingress, observability/analytics, or services deployed through the homelab GitOps repository. Trigger for requests mentioning homelab, Talos, Proxmox, Argo, GitOps, Kubernetes services, Cloudflare Tunnel, 1Password Connect, Grafana MCP, analytics dashboards, or homelab domains.
+description: Use this when working on the user's Talos/Proxmox homelab, Kubernetes GitOps repo, Argo CD apps, Cilium/network policies, 1Password/External Secrets, Cloudflare Tunnel ingress, observability/analytics, or services deployed through the homelab GitOps repository. Trigger for requests mentioning homelab, Talos, Proxmox, Argo, GitOps, Kubernetes services, Cilium, NetworkPolicy, Cloudflare Tunnel, 1Password Connect, Grafana MCP, analytics dashboards, or homelab domains.
 ---
 
 # Homelab
@@ -108,6 +108,68 @@ Secret workflow:
 3. Add/update the `ExternalSecret` mapping.
 4. Verify the synced Kubernetes Secret exists and has the expected key count, without revealing values.
 5. Verify the consuming pod gets the env/volume and works.
+
+
+## Cilium And Network Policies
+
+Cilium is the cluster CNI and policy engine. Treat it as the default networking/security layer for pod traffic, not as an ingress replacement by itself.
+
+Default model:
+
+- Prefer Kubernetes `NetworkPolicy` for ordinary namespace, pod, and port allow rules.
+- Use `CiliumNetworkPolicy` only when the rule needs Cilium-specific features such as entities, L7 matching, FQDN policies, or node/API-server semantics.
+- Keep policies in GitOps. Do not debug by permanently loosening live policies without committing the intended final rule.
+- Start from deny-by-default for workload namespaces, then add explicit ingress and egress allows.
+- Avoid broad `namespaceSelector: {}` / `podSelector: {}` rules unless the goal is deliberately namespace-wide.
+
+Typical namespace policy stack:
+
+1. `default-deny` with both `Ingress` and `Egress` selected.
+2. DNS egress to the cluster DNS pods on TCP/UDP 53.
+3. Same-namespace ingress only when app components need to talk to each other.
+4. Same-namespace egress only when app components need local DB/cache/service calls.
+5. Public HTTP ingress from the tunnel/edge namespace to the exact service port.
+6. Metrics ingress from the monitoring namespace to exact metrics ports.
+7. Read-only datasource ingress from Grafana/monitoring to the exact database port when needed.
+8. Kubernetes API egress only for controllers, operators, jobs, or agents that actually call the API.
+9. Internet egress only for apps that need outbound web/API access; avoid internal/private CIDR egress unless it is explicitly required.
+
+Cloudflare Tunnel pattern:
+
+- Public traffic enters through tunnel pods inside the cluster.
+- Workload namespaces should allow ingress from the tunnel namespace/pods to only the service ports that are published.
+- The workload should not need a broad ingress rule from the whole cluster or the internet.
+
+Monitoring pattern:
+
+- Prometheus gets ingress to scrape selected metrics endpoints.
+- Grafana gets egress to datasources and the datasource namespace gets matching ingress from Grafana.
+- Observability credentials should still be least-privilege; network access is not a substitute for read-only database users.
+
+Cilium-specific policy pattern:
+
+- Use `toEntities`/Cilium entities for targets that Kubernetes `NetworkPolicy` cannot express cleanly, such as `kube-apiserver`.
+- Use Cilium L7/FQDN policies only when they reduce real risk. They add debugging complexity, so document why the policy is not a plain `NetworkPolicy`.
+- Avoid mixing many overlapping `NetworkPolicy`, `CiliumNetworkPolicy`, and cluster-wide policies without checking the combined allow set.
+
+New service checklist:
+
+1. Identify every required traffic path: public ingress, internal app calls, DB/cache, secret store, metrics, Kubernetes API, and outbound internet.
+2. Add the smallest policies matching those paths using stable labels such as namespace labels and `app.kubernetes.io/*` labels.
+3. Render/apply through GitOps and wait for Argo reconciliation.
+4. Verify from both ends: source pod can connect, unrelated pods cannot, app logs are clean, and dashboards/health checks still work.
+5. If a policy blocks something unexpected, inspect pod labels and Cilium/Kubernetes policy state before widening selectors.
+
+Useful checks:
+
+```bash
+KUBECONFIG=<homelab-gitops>/kubeconfig kubectl get networkpolicy -A
+KUBECONFIG=<homelab-gitops>/kubeconfig kubectl get ciliumnetworkpolicy -A
+KUBECONFIG=<homelab-gitops>/kubeconfig kubectl -n <namespace> get pods --show-labels
+KUBECONFIG=<homelab-gitops>/kubeconfig kubectl -n <namespace> describe networkpolicy <policy>
+```
+
+If Cilium/Hubble tooling is available, use it to inspect drops and flows. If it is not available, fall back to pod logs, app errors, and targeted connectivity tests from temporary debug pods.
 
 ## Networking And Domains
 
