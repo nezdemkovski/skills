@@ -213,6 +213,47 @@ For DNS/Cloudflare operations, use the modern official Cloudflare CLI `cf` when 
 - Renovate should see image/chart versions in `apps/**` and `charts/**`.
 - New services should include resource requests/limits and NetworkPolicy updates.
 
+## Service Chart Boundary
+
+Service repos and homelab GitOps have different jobs. Keep that boundary clear.
+
+Service repos should build and publish generic artifacts:
+
+- container images for the app's runtime components;
+- a Helm chart that can run outside this homelab;
+- values for generic inputs such as image tag, hostnames, ports, environment variables, existing Secret names, external database/cache/storage endpoints, resource settings, and feature toggles.
+
+Service charts should not assume this homelab's infrastructure. Avoid putting these in service charts:
+
+- 1Password item names or `ClusterSecretStore` assumptions;
+- CloudNativePG `Cluster`, `ScheduledBackup`, restore, or backup S3 wiring;
+- Cloudflare Tunnel rules, public DNS records, private domains, or tunnel credentials;
+- homelab-specific NetworkPolicies, Cilium policies, StorageClasses, backup destinations, or private IPs;
+- hardcoded local service names unless they are defaults that callers can override.
+
+Homelab GitOps owns the deployment wiring:
+
+- pinned chart/image versions;
+- Argo `Application` values;
+- `ExternalSecret` resources and mappings from 1Password;
+- CNPG clusters, backup secrets, scheduled backups, restore procedures, and `Prune=false` guards for stateful migrations;
+- Cloudflare/ingress routing, domains, NetworkPolicies, Cilium policies, PVC/storage choices, observability integrations, and backup destinations.
+
+Preferred pattern for app databases:
+
+1. The service chart accepts an external database host/port/name and an existing credentials Secret.
+2. Homelab GitOps creates or references the actual database infrastructure.
+3. Homelab GitOps creates the credentials Secret via `ExternalSecret`.
+4. Homelab GitOps configures CNPG backup/restore if the database is CNPG.
+5. The service chart only consumes the connection details.
+
+When moving infrastructure out of a service chart, preserve stateful resources carefully:
+
+- add the new homelab-owned manifests first;
+- use `Prune=false` on stateful resources during ownership migration;
+- verify Argo tracking moved to the intended app before deleting old chart templates;
+- run a real backup or smoke check before calling the migration done.
+
 Typical app workflow:
 
 1. Add or update app/chart/manifests in Git.
