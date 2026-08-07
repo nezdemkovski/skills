@@ -10,7 +10,9 @@ This skill is the operating guide for the user's homelab. It is intentionally pu
 
 ## First Steps
 
-Before making changes, locate the GitOps repo and kubeconfig.
+Before making changes, locate the GitOps repo and kubeconfig. Read the repo's
+`AGENTS.md` before editing or committing; it may require staged bootstrap
+changes that must not be combined with workload resources.
 
 Preferred repo location pattern:
 
@@ -24,6 +26,10 @@ Preferred kubeconfig location pattern:
 <homelab-gitops>/kubeconfig
 ```
 
+Talos credentials may also be stored beside it as `<homelab-gitops>/talosconfig`.
+Treat both files as sensitive local credentials: use them in place, never print
+their contents, copy them into docs, or commit them.
+
 If either path is missing, search under `~/Sites` or ask for the path. Never invent cluster paths.
 
 Use repo/live state over memory. For drift-prone facts, verify before answering or changing anything:
@@ -34,6 +40,11 @@ KUBECONFIG=<homelab-gitops>/kubeconfig kubectl get nodes
 KUBECONFIG=<homelab-gitops>/kubeconfig kubectl -n argocd get applications
 ```
 
+Operate the homelab over the local LAN with the repo-local CLI/API credentials.
+Do not enable Tailscale or another VPN, switch global kube contexts, or open the
+Argo/1Password browser UI unless the user explicitly asks. If access fails,
+check the repo-local config, current LAN route, and API reachability first.
+
 ## Core Model
 
 - The cluster runs Talos on Proxmox.
@@ -43,6 +54,11 @@ KUBECONFIG=<homelab-gitops>/kubeconfig kubectl -n argocd get applications
 - Do not make lasting manual UI changes in Argo/Grafana/Kubernetes when the same state belongs in Git.
 - Prefer pinned chart/image/plugin versions. Do not use `latest`, floating chart revisions, or branch names for external dependencies.
 - Use conventional commit messages. The preferred Git history is linear/rebase-style.
+
+For a new or changed public workload, read
+[references/public-workload-rollout.md](references/public-workload-rollout.md)
+before editing. It contains the staged AppProject workflow, Argo verification,
+Cloudflare rollout rules, and safe endpoint checks.
 
 ## Repository Map
 
@@ -97,7 +113,10 @@ KUBECONFIG=<homelab-gitops>/kubeconfig kubectl -n <namespace> logs deploy/<deplo
 ## Secrets
 
 - Runtime secrets live in 1Password and are synced by External Secrets / 1Password Connect.
-- Use the official 1Password CLI, `op`, for secret reads and writes. Do not manually copy/paste secret values into chat, docs, shell history, or Git.
+- Use the official 1Password CLI, `op`, for secret reads and writes. Check the
+  existing CLI session first; if authentication is needed, use `op signin` in
+  the CLI. Do not open or automate the 1Password UI. Do not manually copy/paste
+  secret values into chat, docs, shell history, or Git.
 - Never reveal passwords, tokens, private keys, tunnel credentials, or generated secret values in final answers. Confirm presence, key names, sync status, or item fields without printing values.
 - Do not commit secrets, raw tunnel credentials, kubeconfigs, tokens, passwords, or sensitive service contracts.
 - If a secret must be added, create/update the relevant 1Password item with `op` and wire it through an `ExternalSecret`.
@@ -193,7 +212,13 @@ Do not expose the user's actual domain list unless it is already in the user's p
 
 Cloudflare Tunnel is the main public ingress path. Prefer Git-managed Kubernetes ingress/router config where it exists, but keep sensitive tunnel credentials and private operational details out of Git.
 
-For DNS/Cloudflare operations, use the modern official Cloudflare CLI `cf` when available. Do not use the old `cloudflare` CLI unless the user explicitly asks for it or the current machine only has that legacy tool installed. Clean up stale DNS records when replacing hostnames. Verify DNS and route behavior with real requests.
+For DNS/Cloudflare operations, use an already authenticated official CLI. Use
+`cf` for general DNS/API work when it is configured, and `cloudflared tunnel
+route dns` for a tunnel-backed hostname when `cloudflared` is the configured
+client. Do not use the old `cloudflare` CLI. Discover tunnel identifiers from
+Git or live CLI state instead of copying them into skills or docs. Clean up
+stale DNS records when replacing hostnames and verify both authoritative and
+local resolution.
 
 ## Storage And Backups
 
@@ -315,12 +340,22 @@ These are recurring lessons from this homelab. Keep them generic in public docs,
 - If a dashboard is backed by a ConfigMap or mounted file, verify both the Kubernetes object and the file mounted inside the consuming pod.
 - If Cloudflare/DNS changes were part of the task, verify public route behavior and clean stale records.
 - If External Secrets are involved, verify `SecretSynced=True`, expected keys exist, and consuming pods actually receive the updated values.
+- Render the exact release name and namespace before wiring a tunnel or policy;
+  generated Service names and pod labels are authoritative, not guessed names.
+- If a tunnel ConfigMap changes, verify that the tunnel pods actually rolled.
+  In charts that use an explicit `configRevision`, bump it with every config
+  change because the process reads ingress rules only at startup.
 
 ## Argo/GitOps Gotchas
 
 - `homelab-root` is the root app; refresh it after changing app lists or shared infra.
 - Workload apps may also need a direct refresh.
 - Argo `Synced/Healthy` is necessary but not sufficient. Verify runtime behavior.
+- Use CLI/API access for Argo. Do not fall back to browser automation just
+  because a local `kubectl` binary cannot reach the API.
+- If `kubectl` is blocked while direct HTTPS reachability works, use the
+  read-only `scripts/argo-app-status.sh` helper rather than changing networks or
+  extracting Argo admin credentials.
 - Avoid manual Argo UI changes; if manual apply is needed to unblock bootstrap, make Git match and document why.
 - If dashboards are provisioned from ConfigMaps or mounted files, check both the Kubernetes object and the mounted file inside the pod.
 - If a chart deploys a plugin, datasource, or dashboard, verify the plugin is installed, the datasource is provisioned, and logs show no query errors.
