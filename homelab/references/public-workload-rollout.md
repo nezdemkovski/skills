@@ -1,111 +1,39 @@
 # Public Workload Rollout
 
-Use this runbook when adding or changing an Argo-managed workload exposed
-through Cloudflare Tunnel. Keep all examples public-safe: discover repositories,
-hostnames, tunnel identifiers, Secret item names, and private addresses from the
-current Git/live state.
+Read this for a new or changed public workload in the Flux homelab. Discover hostnames, tunnel identifiers, addresses, and secret item names from current Git/live state. Read the GitOps repo's `AGENTS.md` first.
 
-## 1. Establish The Operating Surface
+## Inspect and build
 
-1. Work from the GitOps repo and read its `AGENTS.md`.
-2. Use `<gitops-repo>/kubeconfig`; do not rely on or mutate the global context.
-3. Connect over the local LAN. Do not start Tailscale/VPN or use browser
-   automation for Argo or 1Password unless the user explicitly requests it.
-4. Use `op` CLI only. Check the existing session before signing in again, and
-   never print or persist secret values.
-5. Inspect the current Git branch, dirty state, AppProject, workload patterns,
-   network policies, Cloudflare chart, storage class, and Renovate rules.
+1. Confirm the current branch, dirty state, target `clusters/homelab/<name>.yaml`, app path, dependencies, policies, cloudflared chart, storage, and Renovate patterns.
+2. Check the active Kubernetes context. Use `kubectl --context admin@homelab` or the ignored repo-local kubeconfig; do not silently change the global context.
+3. Generate Flux resources with `flux create ... --export` where supported. Keep the generated YAML in Git. Put the workload under `apps/<app>/` and its reconciling `Kustomization` under `clusters/homelab/`.
+4. Pin the chart version, OCI tag, and images. Render the chart with the exact `HelmRelease` release name, namespace, and values. Inspect generated Service names, ports, labels, hooks, and PVC names rather than guessing.
+5. Add resource settings, `ExternalSecret` mappings, deny-by-default and required network allows. For stateful resources, follow `AGENTS.md` prune-disabled annotation and backup rules before changing ownership or deleting anything.
 
-If `kubectl` reports `no route to host` while `ping`, `nc`, or HTTPS to the same
-API endpoint succeeds, suspect a local binary/macOS Local Network permission
-problem before changing the network. Use `scripts/argo-app-status.sh` for a
-narrow read-only status check. Do not retrieve `argocd-initial-admin-secret` or
-mint an Argo admin session without explicit approval.
-
-## 2. Stage AppProject Changes
-
-When a new namespace or external chart repository is not yet permitted:
-
-1. Change only the canonical AppProject and any required bootstrap mirror.
-2. Commit and push that allowlist change separately.
-3. Hard-refresh `homelab-root` through CLI/API.
-4. Wait until the root Application is `Synced/Healthy` at that commit.
-5. Only then commit workload resources.
-
-Never combine the allowlist and first workload commit when repo instructions
-require two phases. Argo evaluates destination/repository permissions before it
-can create the child Application.
-
-## 3. Build And Render The Workload
-
-- Pin the chart version and every configurable image tag. Avoid `latest` and
-  floating external revisions.
-- Render with the exact Argo `releaseName`, namespace, and values. Treat rendered
-  Service names, ports, labels, hooks, and PVC names as authoritative.
-- Do not guess a Service FQDN from the chart name. Helm fullname helpers often
-  prepend both release and chart names.
-- Inspect test hooks too. If an external chart's tests use unpinned or unsuitable
-  images, use Argo's supported Helm test-skip option only after documenting why.
-- Add resources, persistence, Renovate coverage, and `Prune=false` guards where
-  loss of state would be unacceptable.
-- Create the 1Password item through `op` without displaying generated values;
-  map it through `ExternalSecret` and verify `Ready=True/SecretSynced` rather
-  than reading the resulting Secret data.
-- Add deny-by-default, DNS, same-namespace, required internet egress, and the
-  exact tunnel ingress rule. Verify rendered/live pod labels before writing
-  selectors.
-
-Run at minimum:
+Useful checks:
 
 ```bash
+flux build kustomization <name> --path ./clusters/homelab \
+  --kustomization-file ./clusters/homelab/<name>.yaml
+helm lint <chart> -f <values>
+helm template <release> <chart> --namespace <namespace> -f <values>
 git diff --check
-helm lint <chart-or-package> -f <values>
-helm template <release> <chart-or-package> --namespace <namespace> -f <values>
 ```
 
-## 4. Wire Cloudflare Tunnel And DNS
+Use the checks relevant to the manifest type; do not run Helm commands for a raw Kustomize-only workload.
 
-1. Point the tunnel rule at the rendered Kubernetes Service FQDN and port.
-2. Allow cloudflared egress to the workload namespace and matching workload
-   ingress from the tunnel pods.
-3. Bump the Cloudflare chart's explicit `configRevision` whenever its ConfigMap
-   changes; cloudflared reads ingress rules at startup.
-4. Commit, push, refresh root and child Applications, and wait for new
-   cloudflared pods before testing the route.
-5. Create the DNS route with the configured official CLI. For an existing named
-   tunnel, `cloudflared tunnel route dns <discovered-tunnel> <hostname>` is the
-   appropriate operation.
-6. Verify authoritative DNS (for example `dig @1.1.1.1`) and the local resolver.
-   If only the local resolver has a negative cache, use `curl --resolve` against
-   the authoritative edge IP for diagnosis; do not change DNS again.
+## Cloudflare and DNS
 
-For public `502` responses, read the fresh cloudflared logs:
+1. Point the tunnel ingress rule at the rendered Service FQDN and port. Add corresponding cloudflared egress and workload ingress policies.
+2. Commit and push the Git change. Reconcile the relevant Flux source/Kustomizations/HelmReleases, then verify cloudflared pods rolled to the new ConfigMap checksum. The current chart handles this automatically; re-check the template if it changes.
+3. Create or update DNS with the configured official CLI, using the discovered tunnel. Verify authoritative and local DNS and the HTTPS response.
 
-- `no such host`: the Service FQDN is wrong or stale;
-- `connection refused`: the Service port/target or workload readiness is wrong;
-- timeout: inspect NetworkPolicies, endpoints, and routing;
-- correct ConfigMap but old behavior: tunnel pods probably did not roll.
+For a public `502`, inspect fresh cloudflared logs: `no such host` points to the Service name; `connection refused` to Service port/endpoints/readiness; timeout to routing or policies. If the ConfigMap is correct but behavior is old, inspect the pod rollout.
 
-## 5. Verify Without Exposing Secrets
+## Verify the result
 
-Require all of these before calling the deployment complete:
+Before calling the deployment complete, check the expected Git revision is reconciled and Flux resources are Ready; required pods are ready; PVCs are bound; `ExternalSecret` reports Ready; EndpointSlices have ready backends; cloudflared has the route; authoritative and local DNS resolve; and an internal and public request reach the intended service.
 
-- root and child Applications are `Synced/Healthy` at the expected revisions;
-- all required pods are ready and PVCs are bound;
-- `ExternalSecret` reports `Ready=True/SecretSynced`;
-- Service EndpointSlices contain ready endpoints;
-- cloudflared pods are from the expected rollout and logs show the new route;
-- authoritative and local DNS resolve;
-- a public request reaches the intended gateway/application;
-- an internal health request succeeds.
+An unauthenticated `401` can prove route reachability for a protected endpoint, but verify upstream health separately. Do not retrieve credentials solely for a smoke test or send them to a public endpoint without authorization for that destination.
 
-An unauthenticated `401` can be the correct public result for an API-key or
-Basic-Auth protected route: it proves DNS, Cloudflare, tunnel, Service, and
-gateway reachability. Verify the upstream health separately through a
-non-secret health route or Kubernetes pod/service proxy. Do not read credentials
-from 1Password merely for a smoke test or transmit them to a public endpoint
-without explicit authorization for those exact credentials and destination.
-
-Report committed, pushed, Argo-synced, runtime-ready, DNS-created, and publicly
-verified states separately. Include any remaining limitation instead of treating
-`Synced/Healthy` as sufficient.
+Report committed, pushed, Flux reconciled, runtime ready, DNS created, and public endpoint verified separately. If the workload is actually still Argo-managed, follow its live ownership and reconciliation model instead.
