@@ -51,6 +51,46 @@ Use the repo's current `AGENTS.md` for any additional validation and commit rule
 
 For public workloads, read [references/public-workload-rollout.md](references/public-workload-rollout.md). It covers storage, policies, tunnel/DNS routing, and endpoint verification.
 
+## Talos OS upgrades
+
+Talos does not update itself by default. Upgrade the OS through `talosctl`; Flux and Renovate manage GitOps dependencies, not the node OS. Kubernetes upgrades are separate and must not be included implicitly in a Talos upgrade.
+
+Before upgrading, read the target release notes and the current [upgrade guide](https://docs.siderolabs.com/talos/latest/configure-your-talos-cluster/lifecycle-management/upgrading-talos). Verify the Kubernetes support matrix and required migrations. Follow adjacent minor releases, using the latest patch releases along the supported path; discover the target version instead of hardcoding the last version used here.
+
+1. Inspect live versions, extensions, etcd health, node readiness, Flux status, and PodDisruptionBudgets:
+
+   ```bash
+   talosctl --talosconfig <repo>/talosconfig version
+   talosctl --talosconfig <repo>/talosconfig get extensions
+   talosctl --talosconfig <repo>/talosconfig etcd status
+   kubectl --context admin@homelab get nodes -o wide
+   kubectl --context admin@homelab get pdb -A
+   ```
+
+2. Establish the backup/recovery path. The user maintains Proxmox VM backups; when they explicitly confirm those backups are sufficient for the operation, use that context without demanding an additional backup approval. Otherwise verify a recent usable backup; an etcd snapshot alone does not back up application volumes. Never print machine configuration or credential contents while discovering upgrade parameters.
+3. Select the Image Factory installer for the target version, architecture, boot mode, and existing schematic/extensions. Starting with Talos 1.14, `ghcr.io/siderolabs/installer` is no longer published. For a standard non-SecureBoot machine without customizations, the empty schematic is `376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba`. Do not substitute it for a customized image.
+4. Discover the current topology. For a single-node cluster, explain the reboot outage. If singleton database PDBs prevent eviction and the user has authorized the outage, use `--drain=false`; services stop during reboot and recover on the same node. On a multi-node cluster, normally keep drain enabled and upgrade one node at a time, checking health between nodes.
+
+   ```bash
+   talosctl --talosconfig <repo>/talosconfig -n <node-ip> upgrade \
+     --image factory.talos.dev/metal-installer/<schematic-id>:<target-version> \
+     --drain=false --progress plain --timeout 15m
+   ```
+
+   This example is for the confirmed single-node case. Inspect the installed CLI help before using flags; current upgrades preserve data without an extra `--preserve` flag. Keep monitoring through installation, reboot, and post-checks. Do not report completion merely because the installer finished.
+5. Verify the running server version, node Ready, Talos health, all deployment replicas, StatefulSets/CloudNativePG databases, Cilium/DNS, and Flux Kustomizations/HelmReleases. Check representative public routes from the Git-managed tunnel configuration with `curl`; redirects or a route-specific 404 need interpretation, not a blanket success claim.
+
+   ```bash
+   talosctl --talosconfig <repo>/talosconfig version
+   talosctl --talosconfig <repo>/talosconfig health --wait-timeout 5m
+   kubectl --context admin@homelab get nodes -o wide
+   kubectl --context admin@homelab get deployments,statefulsets -A
+   flux --context admin@homelab get kustomizations -A
+   flux --context admin@homelab get helmreleases -A
+   ```
+
+If recovery fails, inspect Talos services, kubelet logs, and Kubernetes events before making changes. Talos retains the previous OS image for rollback (`talosctl rollback`); check release-specific rollback constraints and any data migrations first. Report the final OS and Kubernetes versions and any unresolved recovery issue. Update Git-managed OS provisioning pins only if the repository actually owns them.
+
 ## Secrets and access
 
 - Runtime secrets are in the Homelab 1Password vault and reach the cluster via External Secrets Operator and the `onepassword` `ClusterSecretStore`. Commit `ExternalSecret` references, never secret values or generated Kubernetes Secrets.
