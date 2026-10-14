@@ -1,18 +1,17 @@
 ---
 name: homelab
 description: >
-  Operate the user's Talos/Proxmox Kubernetes homelab and its Flux GitOps repository. Use for homelab workloads, Flux, Cilium/network policies, 1Password and External Secrets, Cloudflare Tunnel, storage, observability, and homelab domains.
+  Operate the user's Talos/Proxmox homelab and Flux GitOps repository: workloads, deployment issues, network policies, storage, 1Password/External Secrets, public routes and Talos maintenance.
 ---
 
 # Homelab
 
-Use the current private GitOps repository and live cluster as the source of truth. Keep this skill public-safe: discover domains, secret item names, cluster addresses, and local paths instead of copying them into the skill.
+## Environment and access
 
-## Start with the current state
-
-Locate the GitOps repository (usually `~/Sites/homelab-gitops`) and read its `AGENTS.md` before editing. Check branch, dirty state, and the relevant manifests. The current repository uses `master` and Flux; `clusters/homelab/flux-system` bootstraps the cluster and `clusters/homelab/*.yaml` declares component `Kustomization` objects. Application resources are in `apps/<app>/`, shared controllers and policies in `infrastructure/<component>/`, and local charts in `charts/`. Verify this layout again when working in the repo.
-
-Use the standard global client configs: `~/.kube/config` with Kubernetes context `admin@homelab`, and `~/.talos/config` with Talos context `homelab`. Select the context explicitly with `kubectl --context admin@homelab`, `flux --context admin@homelab` or `talosctl --context homelab`; do not rely on or change the user's current context for routine operations. Keep config files outside the code repository with permissions `0600`. Do not recreate repo-local kubeconfig or talosconfig files. Recovery copies remain as attachments in the Homelab 1Password vault; restore to the standard global location when needed, merging with existing contexts rather than overwriting them. Never print credential contents or commit the files. Check whether `KUBECONFIG` or `TALOSCONFIG` overrides the default location when troubleshooting.
+- GitOps repo: `~/Sites/homelab-gitops`. Read its `AGENTS.md`, branch and working-tree state before changes. Git and the live cluster are authoritative; discover service names, addresses and versions there.
+- `master` is the source of truth. Flux is the only deployment reconciler. Bootstrap: `clusters/homelab/flux-system`; component definitions: `clusters/homelab/*.yaml`; workloads: `apps/<app>`; shared services: `infrastructure/<component>`; local charts: `charts/`.
+- Kubernetes: global `~/.kube/config`, context `admin@homelab`. Talos: global `~/.talos/config`, context `homelab`. Use explicit contexts; keep files `0600`, outside the repo, and preserve other contexts when restoring. Check `KUBECONFIG`/`TALOSCONFIG` overrides if access differs from expectations.
+- Recovery config attachments are in the Homelab 1Password vault. Never print or commit credentials. Use `op`; pass secret values through stdin or restricted temporary files, not command arguments. Remove temporary credential copies afterward.
 
 ```bash
 kubectl --context admin@homelab get nodes
@@ -20,16 +19,18 @@ flux --context admin@homelab get kustomizations -A
 flux --context admin@homelab get helmreleases -A
 ```
 
-The Flux CLI is installed. Prefer it to generate Flux manifests when possible; commit its output to Git. `flux install` and `flux bootstrap` are installation/bootstrap operations, not routine workload deployment commands. Check the existing controllers, Git source, and repository instructions before using them.
+Read only the reference needed for the task:
 
-Flux is the only deployment reconciler for this homelab. Use its Git sources, Kustomizations and HelmReleases to inspect ownership, reconcile changes and diagnose deployment status. Use the official Flux CLI directly; no custom status script is needed.
+- [1Password records](references/onepassword.md): creating, editing, consolidating or restoring vault items and changing ExternalSecret mappings.
+- [Public workloads](references/public-workload-rollout.md): exposing a service, changing tunnel/DNS routes or diagnosing public access.
+- [Talos upgrades](references/talos-upgrades.md): updating or recovering the node OS. Kubernetes upgrades are a separate operation.
 
-## GitOps workflow
+## GitOps changes
 
-1. Inspect the relevant Git path and live Flux resource. Use `flux --context admin@homelab get sources git`, `flux --context admin@homelab get kustomizations`, `flux --context admin@homelab get helmreleases -A`, and `flux --context admin@homelab logs` for diagnostics.
-2. Make durable changes in Git. Keep a separate Flux `Kustomization` for an independently operated app/component and use `spec.dependsOn` for ordering.
-3. Pin exact chart versions, OCI tags, and image tags; keep the registry/repository beside the tag so Renovate can detect it. Renovate proposes updates, and the trusted dependency-review finalizer may merge an approved, unchanged head. Workflow-file changes and stateful/infrastructure majors requiring backup verification remain for human review; follow the current repo rules. Flux reconciles the versions committed to Git.
-4. Render the affected path before pushing. Set `--path` to the selected Flux Kustomization's `spec.path` (for example, `./apps/<app>` or `./infrastructure/<component>`). `clusters/homelab` contains the Flux definitions, not the component's workload manifests. Run from the GitOps repo root:
+1. Inspect the owning Kustomization/HelmRelease and its Git path. Use `flux --context admin@homelab get sources git` and `flux --context admin@homelab logs` for deployment diagnostics.
+2. Put durable changes in Git. Keep one Kustomization per independently operated component, with `spec.dependsOn` for ordering. Prefer `flux create ... --export` for new Flux resources; use the existing installation rather than re-bootstrap it.
+3. Pin exact versions and keep image registry/repository beside the tag. Follow `AGENTS.md` for Renovate, dependency review, merge gates and backup requirements.
+4. Render from the repo root, setting `<manifest-path>` to the selected Kustomization's `spec.path`, not the directory holding its Flux definition:
 
    ```bash
    flux --context admin@homelab build kustomization <name> --path <manifest-path> \
@@ -37,112 +38,24 @@ Flux is the only deployment reconciler for this homelab. Use its Git sources, Ku
    git diff --check
    ```
 
-   This is an offline render: Secret/ConfigMap-backed substitutions are skipped. If a HelmRelease uses a local chart, also render its chart templates with the actual release name, target namespace and values; the Kustomization render only contains the HelmRelease definition.
+   Offline rendering skips Secret/ConfigMap-backed substitutions. A rendered HelmRelease is not a rendered chart: also render changed chart templates with the actual release name, namespace and values.
 
-5. After pushing, reconcile and check the reported revision and Ready condition. Then verify the real workload, not only the controller status:
+5. After publishing, reconcile and verify the expected Git revision:
 
    ```bash
    flux --context admin@homelab reconcile source git flux-system
    flux --context admin@homelab reconcile kustomization <name> --with-source
-   flux --context admin@homelab get kustomizations
-   flux --context admin@homelab get helmreleases -A
-   kubectl --context admin@homelab -n <namespace> get pods,svc
    ```
 
-Use the repo's current `AGENTS.md` for any additional validation and commit rules. Avoid long-lived manual cluster changes; when a bootstrap exception is necessary, bring Git into agreement. Keep `flux --context admin@homelab suspend kustomization <name>` limited to a maintenance window; resume it immediately after maintenance and record durable changes in Git.
+   Check the affected Kustomization/HelmRelease Ready conditions, workloads and the service's real behavior. For monitoring, verify data queries; for changed secrets, verify a fresh ExternalSecret sync and application reload. Unchanged consumer Secret data needs no restart.
 
-For public workloads, read [references/public-workload-rollout.md](references/public-workload-rollout.md). It covers storage, policies, tunnel/DNS routing, and endpoint verification.
+Report committed/pushed, reconciled, runtime ready and endpoint verification as separate facts. Limit suspension to a bounded maintenance window, resume afterward, and record durable live changes in Git.
 
-## Talos OS upgrades
+## Operational boundaries
 
-Talos does not update itself by default. Upgrade the OS through `talosctl`; Flux and Renovate manage GitOps dependencies, not the node OS. Kubernetes upgrades are separate and must not be included implicitly in a Talos upgrade.
+- **Secrets:** Homelab vault → 1Password Connect → ESO `onepassword` ClusterSecretStore. Git stores ExternalSecret references only. One Secure Note per service, no tags; use the reference for field conventions. Keep CI credentials in their owning GitHub repository secrets.
+- **Network:** Cilium enforces deny-by-default workload policies. Add only required DNS/API, app, database, backup, monitoring and tunnel traffic. Use ordinary NetworkPolicy for pod/namespace/port rules; CiliumNetworkPolicy for Cilium-specific features. Public egress excludes private ranges; LAN dependencies need a documented service-specific rule. Verify affected connections after shared-policy changes.
+- **Data:** `local-path` volumes are node-bound. Before removing, renaming or moving stateful resources, inspect PVC/PV bindings and verify an off-node restorable backup. Preserve prune-disabled namespaces/PVCs/CNPG Clusters and `Retain` reclaim policies. Never reset an app by deleting its namespace.
+- **Ownership:** Product repos publish portable images/charts. This repo owns homelab deployment wiring, secrets references, databases/backups, policies, routes and storage. Keep local domains and deployment choices out of portable charts.
 
-Before upgrading, read the target release notes and the current [upgrade guide](https://docs.siderolabs.com/talos/latest/configure-your-talos-cluster/lifecycle-management/upgrading-talos). Verify the Kubernetes support matrix and required migrations. Follow adjacent minor releases, using the latest patch releases along the supported path; discover the target version instead of hardcoding the last version used here.
-
-1. Inspect live versions, extensions, etcd health, node readiness, Flux status, and PodDisruptionBudgets:
-
-   ```bash
-   talosctl --context homelab version
-   talosctl --context homelab get extensions
-   talosctl --context homelab etcd status
-   kubectl --context admin@homelab get nodes -o wide
-   kubectl --context admin@homelab get pdb -A
-   ```
-
-2. Establish the backup/recovery path. The user maintains Proxmox VM backups; when they explicitly confirm those backups are sufficient for the operation, use that context without demanding an additional backup approval. Otherwise verify a recent usable backup; an etcd snapshot alone does not back up application volumes. Never print machine configuration or credential contents while discovering upgrade parameters.
-3. Select the Image Factory installer for the target version, architecture, boot mode, and existing schematic/extensions. Starting with Talos 1.14, `ghcr.io/siderolabs/installer` is no longer published. For a standard non-SecureBoot machine without customizations, the empty schematic is `376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba`. Do not substitute it for a customized image.
-4. Discover the current topology. For a single-node cluster, explain the reboot outage. If singleton database PDBs prevent eviction and the user has authorized the outage, use `--drain=false`; services stop during reboot and recover on the same node. On a multi-node cluster, normally keep drain enabled and upgrade one node at a time, checking health between nodes.
-
-   ```bash
-   talosctl --context homelab -n <node-ip> upgrade \
-     --image factory.talos.dev/metal-installer/<schematic-id>:<target-version> \
-     --drain=false --progress plain --timeout 15m
-   ```
-
-   This example is for the confirmed single-node case. Inspect the installed CLI help before using flags; current upgrades preserve data without an extra `--preserve` flag. Keep monitoring through installation, reboot, and post-checks. Do not report completion merely because the installer finished.
-5. Verify the running server version, node Ready, Talos health, all deployment replicas, StatefulSets/CloudNativePG databases, Cilium/DNS, and Flux Kustomizations/HelmReleases. Check representative public routes from the Git-managed tunnel configuration with `curl`; redirects or a route-specific 404 need interpretation, not a blanket success claim.
-
-   ```bash
-   talosctl --context homelab version
-   talosctl --context homelab health --wait-timeout 5m
-   kubectl --context admin@homelab get nodes -o wide
-   kubectl --context admin@homelab get deployments,statefulsets -A
-   flux --context admin@homelab get kustomizations -A
-   flux --context admin@homelab get helmreleases -A
-   ```
-
-If recovery fails, inspect Talos services, kubelet logs, and Kubernetes events before making changes. Talos retains the previous OS image for rollback (`talosctl --context homelab rollback`); check release-specific rollback constraints and any data migrations first. Report the final OS and Kubernetes versions and any unresolved recovery issue. Update Git-managed OS provisioning pins only if the repository actually owns them.
-
-## Secrets and access
-
-- Runtime secrets are in the Homelab 1Password vault and reach the cluster via External Secrets Operator and the `onepassword` `ClusterSecretStore`. Commit `ExternalSecret` references, never secret values or generated Kubernetes Secrets.
-- Use the official `op` CLI for 1Password. Check the active account/session; use `op signin` if needed. Do not put secret values in chat, Git, docs, or shell command arguments. Verify item fields and `ExternalSecret` Ready status without printing values.
-- The global kubeconfig and talosconfig are sensitive local credentials. Their 1Password attachments are backups, not Kubernetes runtime secrets. Do not wire them into External Secrets.
-- Keep CI credentials in their owning GitHub repository secrets; do not mirror them into 1Password during vault maintenance.
-- Generate admin/UI tokens on demand with short practical durations. Prefer separate read-only credentials for observability.
-
-### 1Password item format
-
-- Keep one active **Secure Note** per service, with a short, stable service name and **no tags**. Do not create Login, Password or API Credentials items for homelab service configuration.
-- Put application keys, database, Redis, registry and frontend configuration in clearly named sections of the same item. Keep credentials for a shared dependency in that dependency's item; consumers reference it instead of copying its secrets.
-- Use unique field labels across the whole item: External Secrets selects labels, even when fields are in different sections. Preserve descriptive application-specific key names; avoid generic `username`/`password` fields for database credentials and duplicate password aliases.
-
-| Section | Field labels |
-| --- | --- |
-| PostgreSQL | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_URL` |
-| PostgreSQL access from a Mac | `DB_PORT_FORWARD`, `DB_LOCAL_URL` |
-| PostgreSQL read-only account | `DB_READER_USER`, `DB_READER_PASSWORD`, `DB_READER_URL` |
-| Redis | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_URL` |
-| ClickHouse | `CLICKHOUSE_HOST`, `CLICKHOUSE_PORT`, `CLICKHOUSE_DATABASE`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_URL` |
-| Container registry | `GHCR_USER`, `GHCR_TOKEN` |
-
-- Passwords, tokens, private keys and connection strings containing credentials must be concealed fields. Keep host, port, database and user separately readable. URL-encode credentials in connection strings and verify that parsed credentials match the separate fields.
-- Discover database host, port, name and user from the current manifests and live resources. `DB_URL` uses the actual cluster service address. For an active PostgreSQL database, add a `DB_PORT_FORWARD` command using `kubectl --context admin@homelab` without hardcoded config-file or repository paths. Add a `DB_LOCAL_URL` pointing at the same local port. Prefer local port `15432`; explain that the forwarding session must stay open and the port cannot serve two databases at once.
-- For a service absent from the current cluster, preserve its credentials and mark the saved endpoint as historical/unverified in `DB_STATUS`. Do not present it as a working connection or invent credentials for an embedded database that has no database account.
-- Keep kubeconfig and talosconfig as recovery attachments in their respective service notes, separate from runtime External Secrets.
-
-### Reorganizing existing items
-
-1. Inventory item fields, attachments and every consumer, including shared database readers, registry pulls, Helm values and `ExternalSecret` references. Preserve existing credentials; organizing records does not imply rotating passwords or tokens.
-2. Populate the destination Secure Note and verify every populated source value is retained, with intentional field-name mappings. The CLI cannot change an item's category in place: create a replacement Secure Note and preserve the original until verification. Check attachment identity and readability when moving or renaming records.
-3. Keep canonical item names unique and maintain usable references during the transition. Update the GitOps references and render affected manifests/charts, then publish through the normal Git workflow and reconcile Flux.
-4. Force-refresh affected ExternalSecrets and wait for a new successful refresh, not just a pre-existing Ready condition. For a reorganization without credential changes, compare consumer Secret data before and after using hashes without printing values. Verify Flux, Helm and workloads; unchanged Secret data does not require restarting consumers.
-5. Archive superseded records only after consumers read the destination successfully. Preserve recoverability; do not permanently delete source items. Confirm the final active inventory has one Secure Note per service, no tags and no obsolete aliases. Remove temporary local credential copies.
-
-Use stdin JSON or permission-restricted temporary templates for `op` writes rather than secret-bearing command arguments. Keep reusable skill examples free of private service names, addresses and values; the private GitOps secret-store documentation holds the current inventory and deployment-specific details.
-
-## Network, DNS, and storage
-
-Cilium enforces Kubernetes and Cilium network policies. Workload namespaces are deny-by-default. Prefer plain `NetworkPolicy` for pod/namespace/port rules; use `CiliumNetworkPolicy` only for Cilium-specific selectors, entities, FQDN, or L7. Account for DNS, same-namespace calls, databases, Kubernetes API, monitoring, backup traffic, and tunnel ingress. Validate both the intended connection and isolation before widening a policy.
-
-Cloudflare Tunnel is the public ingress path. Its Git-managed routes live in the local cloudflared chart values; rendered Service names/ports and live endpoints are authoritative. The current chart rolls tunnel pods when its ConfigMap changes via a pod-template checksum, so verify the rollout rather than assuming a separate revision bump is needed. Use the configured official Cloudflare CLI for DNS changes and verify authoritative and local DNS plus the public HTTP response.
-
-Treat `local-path` PVCs as node-bound. Check PV/PVC binding and a restorable backup before renaming, moving, or removing stateful resources. The repo protects namespaces, PVCs, and database clusters with Flux prune-disabled annotations where needed, and storage reclaim policy should be `Retain`. Moving an app between controllers or namespaces requires separate data extraction, restore, reconciliation, and runtime checks before removing the old owner.
-
-## Service boundary and verification
-
-Service repositories publish portable images/charts. Homelab GitOps owns local deployment wiring: `HelmRelease`/`Kustomization`, pinned versions, `ExternalSecret`, database and backup resources, Cloudflare routes, policies, and storage. Avoid embedding this homelab's domains, secret item names, or storage choices in a portable service chart.
-
-For releases, verify the source tag/image exists, the manifest renders, Flux reports the expected revision and Ready status, pods use the intended image, logs are clean, and a real request works. For monitoring and analytics, also confirm datasources and panels return data. For secret changes, confirm a fresh successful `ExternalSecret` synchronization and consumer readiness without displaying Secret values. If credentials changed, verify the application has reloaded them; unchanged consumer data needs no rollout.
-
-Report Git committed/pushed, Flux reconciled, runtime ready, and public route verified as separate states.
+Keep this reusable skill free of private addresses, secret values and copied inventory; deployment-specific details belong in the private GitOps repo.
