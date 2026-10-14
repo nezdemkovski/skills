@@ -12,7 +12,7 @@ Use the current private GitOps repository and live cluster as the source of trut
 
 Locate the GitOps repository (usually `~/Sites/homelab-gitops`) and read its `AGENTS.md` before editing. Check branch, dirty state, and the relevant manifests. The current repository uses `master` and Flux; `clusters/homelab/flux-system` bootstraps the cluster and `clusters/homelab/*.yaml` declares component `Kustomization` objects. Application resources are in `apps/<app>/`, shared controllers and policies in `infrastructure/<component>/`, and local charts in `charts/`. Verify this layout again when working in the repo.
 
-The user's main kubeconfig has context `admin@homelab`; another context may be active. Select it explicitly for homelab commands with `kubectl --context admin@homelab`, or use the ignored repo-local `kubeconfig` through `KUBECONFIG=<repo>/kubeconfig`. The ignored `talosconfig` is similarly available locally. Both files are also backed up as attachments in the Homelab 1Password vault. Never print their contents or commit them. Do not change the user's global current context just to run a check.
+Use the standard global client configs: `~/.kube/config` with Kubernetes context `admin@homelab`, and `~/.talos/config` with Talos context `homelab`. Select the context explicitly with `kubectl --context admin@homelab`, `flux --context admin@homelab` or `talosctl --context homelab`; do not rely on or change the user's current context for routine operations. Keep config files outside the code repository with permissions `0600`. Do not recreate repo-local kubeconfig or talosconfig files. Recovery copies remain as attachments in the Homelab 1Password vault; restore to the standard global location when needed, merging with existing contexts rather than overwriting them. Never print credential contents or commit the files. Check whether `KUBECONFIG` or `TALOSCONFIG` overrides the default location when troubleshooting.
 
 ```bash
 kubectl --context admin@homelab get nodes
@@ -40,10 +40,10 @@ Argo CD may still be present for historical or transitional work, but do not ass
 5. After pushing, reconcile and check the reported revision and Ready condition. Then verify the real workload, not only the controller status:
 
    ```bash
-   flux reconcile source git flux-system
-   flux reconcile kustomization <name> --with-source
-   flux get kustomizations
-   flux get helmreleases -A
+   flux --context admin@homelab reconcile source git flux-system
+   flux --context admin@homelab reconcile kustomization <name> --with-source
+   flux --context admin@homelab get kustomizations
+   flux --context admin@homelab get helmreleases -A
    kubectl --context admin@homelab -n <namespace> get pods,svc
    ```
 
@@ -60,9 +60,9 @@ Before upgrading, read the target release notes and the current [upgrade guide](
 1. Inspect live versions, extensions, etcd health, node readiness, Flux status, and PodDisruptionBudgets:
 
    ```bash
-   talosctl --talosconfig <repo>/talosconfig version
-   talosctl --talosconfig <repo>/talosconfig get extensions
-   talosctl --talosconfig <repo>/talosconfig etcd status
+   talosctl --context homelab version
+   talosctl --context homelab get extensions
+   talosctl --context homelab etcd status
    kubectl --context admin@homelab get nodes -o wide
    kubectl --context admin@homelab get pdb -A
    ```
@@ -72,7 +72,7 @@ Before upgrading, read the target release notes and the current [upgrade guide](
 4. Discover the current topology. For a single-node cluster, explain the reboot outage. If singleton database PDBs prevent eviction and the user has authorized the outage, use `--drain=false`; services stop during reboot and recover on the same node. On a multi-node cluster, normally keep drain enabled and upgrade one node at a time, checking health between nodes.
 
    ```bash
-   talosctl --talosconfig <repo>/talosconfig -n <node-ip> upgrade \
+   talosctl --context homelab -n <node-ip> upgrade \
      --image factory.talos.dev/metal-installer/<schematic-id>:<target-version> \
      --drain=false --progress plain --timeout 15m
    ```
@@ -81,8 +81,8 @@ Before upgrading, read the target release notes and the current [upgrade guide](
 5. Verify the running server version, node Ready, Talos health, all deployment replicas, StatefulSets/CloudNativePG databases, Cilium/DNS, and Flux Kustomizations/HelmReleases. Check representative public routes from the Git-managed tunnel configuration with `curl`; redirects or a route-specific 404 need interpretation, not a blanket success claim.
 
    ```bash
-   talosctl --talosconfig <repo>/talosconfig version
-   talosctl --talosconfig <repo>/talosconfig health --wait-timeout 5m
+   talosctl --context homelab version
+   talosctl --context homelab health --wait-timeout 5m
    kubectl --context admin@homelab get nodes -o wide
    kubectl --context admin@homelab get deployments,statefulsets -A
    flux --context admin@homelab get kustomizations -A
@@ -95,8 +95,38 @@ If recovery fails, inspect Talos services, kubelet logs, and Kubernetes events b
 
 - Runtime secrets are in the Homelab 1Password vault and reach the cluster via External Secrets Operator and the `onepassword` `ClusterSecretStore`. Commit `ExternalSecret` references, never secret values or generated Kubernetes Secrets.
 - Use the official `op` CLI for 1Password. Check the active account/session; use `op signin` if needed. Do not put secret values in chat, Git, docs, or shell command arguments. Verify item fields and `ExternalSecret` Ready status without printing values.
-- The repo-local kubeconfig and talosconfig are sensitive local credentials. Their 1Password attachments are backups, not Kubernetes runtime secrets. Do not wire them into External Secrets.
+- The global kubeconfig and talosconfig are sensitive local credentials. Their 1Password attachments are backups, not Kubernetes runtime secrets. Do not wire them into External Secrets.
 - Generate admin/UI tokens on demand with short practical durations. Prefer separate read-only credentials for observability.
+
+### 1Password item format
+
+- Keep one active **Secure Note** per service, with a short, stable service name and **no tags**. Do not create Login, Password or API Credentials items for homelab service configuration.
+- Put application keys, database, Redis, registry and frontend configuration in clearly named sections of the same item. Keep credentials for a shared dependency in that dependency's item; consumers reference it instead of copying its secrets.
+- Use unique field labels across the whole item: External Secrets selects labels, even when fields are in different sections. Preserve descriptive application-specific key names; avoid generic `username`/`password` fields for database credentials and duplicate password aliases.
+
+| Section | Field labels |
+| --- | --- |
+| PostgreSQL | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_URL` |
+| PostgreSQL access from a Mac | `DB_PORT_FORWARD`, `DB_LOCAL_URL` |
+| PostgreSQL read-only account | `DB_READER_USER`, `DB_READER_PASSWORD`, `DB_READER_URL` |
+| Redis | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_URL` |
+| ClickHouse | `CLICKHOUSE_HOST`, `CLICKHOUSE_PORT`, `CLICKHOUSE_DATABASE`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_URL` |
+| Container registry | `GHCR_USER`, `GHCR_TOKEN` |
+
+- Passwords, tokens, private keys and connection strings containing credentials must be concealed fields. Keep host, port, database and user separately readable. URL-encode credentials in connection strings and verify that parsed credentials match the separate fields.
+- Discover database host, port, name and user from the current manifests and live resources. `DB_URL` uses the actual cluster service address. For an active PostgreSQL database, add a `DB_PORT_FORWARD` command using `kubectl --context admin@homelab` and no hardcoded config-file or repository path and a `DB_LOCAL_URL` pointing at that local port. Prefer local port `15432`; explain that the forwarding session must stay open and the port cannot serve two databases at once.
+- For a service absent from the current cluster, preserve its credentials and mark the saved endpoint as historical/unverified in `DB_STATUS`. Do not present it as a working connection or invent credentials for an embedded database that has no database account.
+- Keep kubeconfig and talosconfig as recovery attachments in their respective service notes, separate from runtime External Secrets.
+
+### Reorganizing existing items
+
+1. Inventory item fields, attachments and every consumer, including shared database readers, registry pulls, Helm values and `ExternalSecret` references. Preserve existing credentials; organizing records does not imply rotating passwords or tokens.
+2. Populate the destination Secure Note and verify every populated source value is retained, with intentional field-name mappings. The CLI cannot change an item's category in place: create a replacement Secure Note and preserve the original until verification. Check attachment identity and readability when moving or renaming records.
+3. Keep canonical item names unique and maintain usable references during the transition. Update the GitOps references and render affected manifests/charts, then publish through the normal Git workflow and reconcile Flux.
+4. Force-refresh affected ExternalSecrets and wait for a new successful refresh, not just a pre-existing Ready condition. For a reorganization without credential changes, compare consumer Secret data before and after using hashes without printing values. Verify Flux, Helm and workloads; unchanged Secret data does not require restarting consumers.
+5. Archive superseded records only after consumers read the destination successfully. Preserve recoverability; do not permanently delete source items. Confirm the final active inventory has one Secure Note per service, no tags and no obsolete aliases. Remove temporary local credential copies.
+
+Use stdin JSON or permission-restricted temporary templates for `op` writes rather than secret-bearing command arguments. Keep reusable skill examples free of private service names, addresses and values; the private GitOps secret-store documentation holds the current inventory and deployment-specific details.
 
 ## Network, DNS, and storage
 

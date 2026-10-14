@@ -5,7 +5,7 @@ Read this for a new or changed public workload in the Flux homelab. Discover hos
 ## Inspect and build
 
 1. Confirm the current branch, dirty state, target `clusters/homelab/<name>.yaml`, app path, dependencies, policies, cloudflared chart, storage, and Renovate patterns.
-2. Check the active Kubernetes context. Use `kubectl --context admin@homelab` or the ignored repo-local kubeconfig; do not silently change the global context.
+2. Check the active Kubernetes context. Use `kubectl --context admin@homelab` with global `~/.kube/config`; do not recreate a repo-local kubeconfig or silently change the global context.
 3. Generate Flux resources with `flux create ... --export` where supported. Keep the generated YAML in Git. Put the workload under `apps/<app>/` and its reconciling `Kustomization` under `clusters/homelab/`.
 4. Pin the chart version, OCI tag, and images. Render the chart with the exact `HelmRelease` release name, namespace, and values. Inspect generated Service names, ports, labels, hooks, and PVC names rather than guessing.
 5. Add resource settings, `ExternalSecret` mappings, deny-by-default and required network allows. For stateful resources, follow `AGENTS.md` prune-disabled annotation and backup rules before changing ownership or deleting anything.

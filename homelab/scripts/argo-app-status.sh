@@ -9,7 +9,7 @@ fi
 gitops_repo=$1
 shift
 
-kubeconfig_file=${KUBECONFIG:-"${gitops_repo}/kubeconfig"}
+kubeconfig_file=${KUBECONFIG:-"${HOME}/.kube/config"}
 if [[ ! -f "$kubeconfig_file" ]]; then
   echo "kubeconfig not found: $kubeconfig_file" >&2
   exit 66
@@ -42,7 +42,7 @@ trap 'exit 130' HUP INT TERM
 kube_server=$(
   "$ruby_bin" -ryaml -rbase64 -e '
     config = YAML.load_file(ARGV[0])
-    context_name = config.fetch("current-context")
+    context_name = "admin@homelab"
     context = config.fetch("contexts").find { |entry| entry.fetch("name") == context_name }.fetch("context")
     cluster = config.fetch("clusters").find { |entry| entry.fetch("name") == context.fetch("cluster") }.fetch("cluster")
     user = config.fetch("users").find { |entry| entry.fetch("name") == context.fetch("user") }.fetch("user")
