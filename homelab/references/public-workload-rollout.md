@@ -10,11 +10,13 @@ Read this for a new or changed public workload in the Flux homelab. Discover hos
 4. Pin the chart version, OCI tag, and images. Render the chart with the exact `HelmRelease` release name, namespace, and values. Inspect generated Service names, ports, labels, hooks, and PVC names rather than guessing.
 5. Add resource settings, `ExternalSecret` mappings, deny-by-default and required network allows. For stateful resources, follow `AGENTS.md` prune-disabled annotation and backup rules before changing ownership or deleting anything.
 
+Set `<manifest-path>` to the selected Flux Kustomization's `spec.path`, relative to the GitOps repo root. Do not render `clusters/homelab` when checking an application's manifests. Offline builds skip Secret/ConfigMap-backed substitutions.
+
 Useful checks:
 
 ```bash
-flux build kustomization <name> --path ./clusters/homelab \
-  --kustomization-file ./clusters/homelab/<name>.yaml
+flux --context admin@homelab build kustomization <name> --path <manifest-path> \
+  --kustomization-file ./clusters/homelab/<name>.yaml --dry-run --in-memory-build
 helm lint <chart> -f <values>
 helm template <release> <chart> --namespace <namespace> -f <values>
 git diff --check
@@ -25,7 +27,7 @@ Use the checks relevant to the manifest type; do not run Helm commands for a raw
 ## Cloudflare and DNS
 
 1. Point the tunnel ingress rule at the rendered Service FQDN and port. Add corresponding cloudflared egress and workload ingress policies.
-2. Commit and push the Git change. Reconcile the relevant Flux source/Kustomizations/HelmReleases, then verify cloudflared pods rolled to the new ConfigMap checksum. The current chart handles this automatically; re-check the template if it changes.
+2. Commit and push the Git change. Reconcile the relevant Flux source/Kustomizations/HelmReleases, then verify cloudflared pods rolled to the new ConfigMap checksum if the tunnel configuration changed. The current chart handles this automatically; re-check the template if it changes.
 3. Create or update DNS with the configured official CLI, using the discovered tunnel. Verify authoritative and local DNS and the HTTPS response.
 
 For a public `502`, inspect fresh cloudflared logs: `no such host` points to the Service name; `connection refused` to Service port/endpoints/readiness; timeout to routing or policies. If the ConfigMap is correct but behavior is old, inspect the pod rollout.
@@ -36,4 +38,4 @@ Before calling the deployment complete, check the expected Git revision is recon
 
 An unauthenticated `401` can prove route reachability for a protected endpoint, but verify upstream health separately. Do not retrieve credentials solely for a smoke test or send them to a public endpoint without authorization for that destination.
 
-Report committed, pushed, Flux reconciled, runtime ready, DNS created, and public endpoint verified separately. If the workload is actually still Argo-managed, follow its live ownership and reconciliation model instead.
+Report committed, pushed, Flux reconciled, runtime ready, DNS created, and public endpoint verified separately.

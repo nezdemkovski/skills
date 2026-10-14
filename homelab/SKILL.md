@@ -1,7 +1,7 @@
 ---
 name: homelab
 description: >
-  Operate the user's Talos/Proxmox Kubernetes homelab and its Flux GitOps repository. Use for homelab workloads, Flux, legacy Argo CD, Cilium/network policies, 1Password and External Secrets, Cloudflare Tunnel, storage, observability, and homelab domains.
+  Operate the user's Talos/Proxmox Kubernetes homelab and its Flux GitOps repository. Use for homelab workloads, Flux, Cilium/network policies, 1Password and External Secrets, Cloudflare Tunnel, storage, observability, and homelab domains.
 ---
 
 # Homelab
@@ -22,20 +22,22 @@ flux --context admin@homelab get helmreleases -A
 
 The Flux CLI is installed. Prefer it to generate Flux manifests when possible; commit its output to Git. `flux install` and `flux bootstrap` are installation/bootstrap operations, not routine workload deployment commands. Check the existing controllers, Git source, and repository instructions before using them.
 
-Argo CD may still be present for historical or transitional work, but do not assume it owns a resource. Check live ownership before touching Argo or pruning old resources. Do not remove Argo as part of unrelated Flux work. The old `scripts/argo-app-status.sh` is only for confirmed Argo-managed applications.
+Flux is the only deployment reconciler for this homelab. Use its Git sources, Kustomizations and HelmReleases to inspect ownership, reconcile changes and diagnose deployment status. Use the official Flux CLI directly; no custom status script is needed.
 
 ## GitOps workflow
 
-1. Inspect the relevant Git path and live Flux resource. Use `flux get sources git`, `flux get kustomizations`, `flux get helmreleases`, and `flux logs` for diagnostics.
+1. Inspect the relevant Git path and live Flux resource. Use `flux --context admin@homelab get sources git`, `flux --context admin@homelab get kustomizations`, `flux --context admin@homelab get helmreleases -A`, and `flux --context admin@homelab logs` for diagnostics.
 2. Make durable changes in Git. Keep a separate Flux `Kustomization` for an independently operated app/component and use `spec.dependsOn` for ordering.
-3. Pin chart versions, OCI tags, and image tags. The repo's Renovate configuration proposes dependency updates; Flux reconciles the versions committed to Git.
-4. Render the affected path before pushing, using the exact resource name and file:
+3. Pin exact chart versions, OCI tags, and image tags; keep the registry/repository beside the tag so Renovate can detect it. Renovate proposes updates, and the trusted dependency-review finalizer may merge an approved, unchanged head. Workflow-file changes and stateful/infrastructure majors requiring backup verification remain for human review; follow the current repo rules. Flux reconciles the versions committed to Git.
+4. Render the affected path before pushing. Set `--path` to the selected Flux Kustomization's `spec.path` (for example, `./apps/<app>` or `./infrastructure/<component>`). `clusters/homelab` contains the Flux definitions, not the component's workload manifests. Run from the GitOps repo root:
 
    ```bash
-   flux build kustomization <name> --path ./clusters/homelab \
-     --kustomization-file ./clusters/homelab/<name>.yaml
+   flux --context admin@homelab build kustomization <name> --path <manifest-path> \
+     --kustomization-file ./clusters/homelab/<name>.yaml --dry-run --in-memory-build
    git diff --check
    ```
+
+   This is an offline render: Secret/ConfigMap-backed substitutions are skipped. If a HelmRelease uses a local chart, also render its chart templates with the actual release name, target namespace and values; the Kustomization render only contains the HelmRelease definition.
 
 5. After pushing, reconcile and check the reported revision and Ready condition. Then verify the real workload, not only the controller status:
 
@@ -47,7 +49,7 @@ Argo CD may still be present for historical or transitional work, but do not ass
    kubectl --context admin@homelab -n <namespace> get pods,svc
    ```
 
-Use the repo's current `AGENTS.md` for any additional validation and commit rules. Avoid long-lived manual cluster changes; when a bootstrap exception is necessary, bring Git into agreement. Keep `flux suspend` limited to a maintenance window and resume afterward.
+Use the repo's current `AGENTS.md` for any additional validation and commit rules. Avoid long-lived manual cluster changes; when a bootstrap exception is necessary, bring Git into agreement. Keep `flux --context admin@homelab suspend kustomization <name>` limited to a maintenance window; resume it immediately after maintenance and record durable changes in Git.
 
 For public workloads, read [references/public-workload-rollout.md](references/public-workload-rollout.md). It covers storage, policies, tunnel/DNS routing, and endpoint verification.
 
@@ -89,13 +91,14 @@ Before upgrading, read the target release notes and the current [upgrade guide](
    flux --context admin@homelab get helmreleases -A
    ```
 
-If recovery fails, inspect Talos services, kubelet logs, and Kubernetes events before making changes. Talos retains the previous OS image for rollback (`talosctl rollback`); check release-specific rollback constraints and any data migrations first. Report the final OS and Kubernetes versions and any unresolved recovery issue. Update Git-managed OS provisioning pins only if the repository actually owns them.
+If recovery fails, inspect Talos services, kubelet logs, and Kubernetes events before making changes. Talos retains the previous OS image for rollback (`talosctl --context homelab rollback`); check release-specific rollback constraints and any data migrations first. Report the final OS and Kubernetes versions and any unresolved recovery issue. Update Git-managed OS provisioning pins only if the repository actually owns them.
 
 ## Secrets and access
 
 - Runtime secrets are in the Homelab 1Password vault and reach the cluster via External Secrets Operator and the `onepassword` `ClusterSecretStore`. Commit `ExternalSecret` references, never secret values or generated Kubernetes Secrets.
 - Use the official `op` CLI for 1Password. Check the active account/session; use `op signin` if needed. Do not put secret values in chat, Git, docs, or shell command arguments. Verify item fields and `ExternalSecret` Ready status without printing values.
 - The global kubeconfig and talosconfig are sensitive local credentials. Their 1Password attachments are backups, not Kubernetes runtime secrets. Do not wire them into External Secrets.
+- Keep CI credentials in their owning GitHub repository secrets; do not mirror them into 1Password during vault maintenance.
 - Generate admin/UI tokens on demand with short practical durations. Prefer separate read-only credentials for observability.
 
 ### 1Password item format
@@ -114,7 +117,7 @@ If recovery fails, inspect Talos services, kubelet logs, and Kubernetes events b
 | Container registry | `GHCR_USER`, `GHCR_TOKEN` |
 
 - Passwords, tokens, private keys and connection strings containing credentials must be concealed fields. Keep host, port, database and user separately readable. URL-encode credentials in connection strings and verify that parsed credentials match the separate fields.
-- Discover database host, port, name and user from the current manifests and live resources. `DB_URL` uses the actual cluster service address. For an active PostgreSQL database, add a `DB_PORT_FORWARD` command using `kubectl --context admin@homelab` and no hardcoded config-file or repository path and a `DB_LOCAL_URL` pointing at that local port. Prefer local port `15432`; explain that the forwarding session must stay open and the port cannot serve two databases at once.
+- Discover database host, port, name and user from the current manifests and live resources. `DB_URL` uses the actual cluster service address. For an active PostgreSQL database, add a `DB_PORT_FORWARD` command using `kubectl --context admin@homelab` without hardcoded config-file or repository paths. Add a `DB_LOCAL_URL` pointing at the same local port. Prefer local port `15432`; explain that the forwarding session must stay open and the port cannot serve two databases at once.
 - For a service absent from the current cluster, preserve its credentials and mark the saved endpoint as historical/unverified in `DB_STATUS`. Do not present it as a working connection or invent credentials for an embedded database that has no database account.
 - Keep kubeconfig and talosconfig as recovery attachments in their respective service notes, separate from runtime External Secrets.
 
@@ -140,6 +143,6 @@ Treat `local-path` PVCs as node-bound. Check PV/PVC binding and a restorable bac
 
 Service repositories publish portable images/charts. Homelab GitOps owns local deployment wiring: `HelmRelease`/`Kustomization`, pinned versions, `ExternalSecret`, database and backup resources, Cloudflare routes, policies, and storage. Avoid embedding this homelab's domains, secret item names, or storage choices in a portable service chart.
 
-For releases, verify the source tag/image exists, the manifest renders, Flux reports the expected revision and Ready status, pods use the intended image, logs are clean, and a real request works. For monitoring and analytics, also confirm datasources and panels return data. For secret changes, confirm `ExternalSecret` Ready status and the consumer rollout without reading Secret values.
+For releases, verify the source tag/image exists, the manifest renders, Flux reports the expected revision and Ready status, pods use the intended image, logs are clean, and a real request works. For monitoring and analytics, also confirm datasources and panels return data. For secret changes, confirm a fresh successful `ExternalSecret` synchronization and consumer readiness without displaying Secret values. If credentials changed, verify the application has reloaded them; unchanged consumer data needs no rollout.
 
-Report Git committed/pushed, Flux reconciled, runtime ready, and public route verified as separate states. If a resource is actually Argo-managed, use its own reconciliation and status checks instead of Flux commands.
+Report Git committed/pushed, Flux reconciled, runtime ready, and public route verified as separate states.
